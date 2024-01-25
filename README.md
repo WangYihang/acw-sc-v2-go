@@ -1,4 +1,4 @@
-# GoLang `net/http.RoundTripper` for `acw_sc__v2`
+# `net/http.RoundTripper` for `acw_sc__v2`
 
 ## Usage
 
@@ -19,8 +19,7 @@ import (
 
 func main() {
 	client := &http.Client{
-		// use acw_sc_v2 as transport
-		Transport: acw_sc_v2.NewTransport(),
+		Transport: acw_sc_v2.NewTransport(), // Use acw_sc_v2 as Transport
 	}
 	resp, err := client.Get("https://www.example.com/")
 	if err != nil {
