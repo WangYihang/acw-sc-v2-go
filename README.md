@@ -12,6 +12,8 @@ go get github.com/WangYihang/acw-sc-v2
 package main
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 
 	acw_sc_v2 "github.com/WangYihang/acw-sc-v2"
@@ -26,5 +28,10 @@ func main() {
 		panic(err)
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(body)
 }
 ```
