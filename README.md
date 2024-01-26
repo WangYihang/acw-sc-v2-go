@@ -1,5 +1,9 @@
 # `net/http.RoundTripper` for `acw_sc__v2`
 
+`acw_sc__v2` is a cookie used by some websites to prevent crawlers.
+When the website detects that the request is sent by a crawler, it returns a javascript challenge. The crawler needs to solve the challenge and resend the request with the cookie set to the challenge value.
+This project provides a GoLang `net/http.RoundTripper` to resolve the challenge automatically.
+
 ## Usage
 
 ```bash
