@@ -2,6 +2,7 @@ package acw_sc_v2
 
 import (
 	"bytes"
+	"compress/gzip"
 	"io"
 	"log/slog"
 	"net/http"
@@ -52,15 +53,43 @@ func crackTheJSCodeAndGetCookie(rawBody []byte) (string, error) {
 	return string(cookie), nil
 }
 
+func readAllBody(response *http.Response) []byte {
+	var reader io.ReadCloser
+	var err error
+	switch response.Header.Get("Content-Encoding") {
+	case "gzip":
+		reader, err = gzip.NewReader(response.Body)
+		if err != nil {
+			slog.Error("error occured while reading response body", slog.String("error", err.Error()))
+		}
+	default:
+		slog.Info("default")
+		reader = response.Body
+	}
+	defer reader.Close()
+
+	buffer := make([]byte, 1024)
+	rawBodyBuffer := bytes.Buffer{}
+	for {
+		for i := range buffer {
+			buffer[i] = 0
+		}
+		n, err := reader.Read(buffer)
+		rawBodyBuffer.Write(buffer[0:n])
+		if err != nil {
+			slog.Error("error occured while reading response body", slog.String("error", err.Error()))
+			break
+		}
+	}
+	return rawBodyBuffer.Bytes()
+}
+
 func (t *antiScrapeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.original.RoundTrip(req)
 	if err != nil {
 		return nil, err
 	}
-	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	rawBody := readAllBody(resp)
 	if isAntiScrapeTriggered(rawBody) {
 		slog.Info("anti-scrape detected")
 		cookieValue, err := crackTheJSCodeAndGetCookie(rawBody)
