@@ -6,17 +6,20 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"time"
 )
 
 func NewTransport() http.RoundTripper {
-	return &antiScrapeTransport{original: http.DefaultTransport}
+	t := &antiScrapeTransport{original: http.DefaultTransport}
+	t.original.(*http.Transport).DisableKeepAlives = true
+	return t
 }
 
 type antiScrapeTransport struct {
-	original http.RoundTripper
+	acw_sc__v2 string
+	original   http.RoundTripper
 }
 
 func isAntiScrapeTriggered(rawBody []byte) bool {
@@ -53,57 +56,75 @@ func crackTheJSCodeAndGetCookie(rawBody []byte) (string, error) {
 	return string(cookie), nil
 }
 
-func readAllBody(response *http.Response) []byte {
+func ReadAllBody(response *http.Response) []byte {
 	var reader io.ReadCloser
 	var err error
+
 	switch response.Header.Get("Content-Encoding") {
 	case "gzip":
+		var rawBodyBuffer bytes.Buffer
 		reader, err = gzip.NewReader(response.Body)
 		if err != nil {
 			slog.Error("error occured while reading response body", slog.String("error", err.Error()))
 		}
+		buffer := make([]byte, 1024)
+		for {
+			n, err := reader.Read(buffer)
+			if n > 0 {
+				rawBodyBuffer.Write(buffer[0:n])
+			}
+			if err != nil {
+				slog.Error("error occured while reading response body", slog.String("error", err.Error()))
+				break
+			}
+		}
+		reader.Close()
+		return rawBodyBuffer.Bytes()
 	default:
-		slog.Info("default")
 		reader = response.Body
+		rawBody, _ := io.ReadAll(reader)
+		response.Body.Close()
+		return rawBody
 	}
-	defer reader.Close()
-
-	buffer := make([]byte, 1024)
-	rawBodyBuffer := bytes.Buffer{}
-	for {
-		for i := range buffer {
-			buffer[i] = 0
-		}
-		n, err := reader.Read(buffer)
-		rawBodyBuffer.Write(buffer[0:n])
-		if err != nil {
-			slog.Error("error occured while reading response body", slog.String("error", err.Error()))
-			break
-		}
-	}
-	return rawBodyBuffer.Bytes()
 }
 
 func (t *antiScrapeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Check if there is a valid cookie
+	if t.acw_sc__v2 != "" {
+		slog.Info("using existing cookie", slog.String("cookie", t.acw_sc__v2))
+		req.AddCookie(&http.Cookie{
+			Name:    "acw_sc__v2",
+			Value:   t.acw_sc__v2,
+			MaxAge:  3600,
+			Path:    "/",
+			Expires: time.Now().Add(3600 * time.Second),
+		})
+	}
+	// Send the original request
 	resp, err := t.original.RoundTrip(req)
 	if err != nil {
 		return nil, err
 	}
-	rawBody := readAllBody(resp)
+	// Read the response body to check if anti scrape is triggered
+	rawBody := ReadAllBody(resp)
 	if isAntiScrapeTriggered(rawBody) {
+		// Anti scrape is triggered
 		slog.Info("anti-scrape detected")
+		// Generate new cookie
 		cookieValue, err := crackTheJSCodeAndGetCookie(rawBody)
 		if err != nil {
 			slog.Error("error occured while cracking the js code: %v", err)
 		}
-		cookieJar, _ := cookiejar.New(nil)
-		cookieURL, _ := url.Parse(req.URL.String())
-		cookieJar.SetCookies(cookieURL, []*http.Cookie{
-			{Name: "acw_sc__v2", Value: cookieValue},
-		})
-		client := &http.Client{Transport: t.original, Jar: cookieJar}
+		// Set new cookie to the current request
+		req.AddCookie(&http.Cookie{Name: "acw_sc__v2", Value: cookieValue})
+		t.acw_sc__v2 = cookieValue
+		// Send the original request again
 		slog.Info("resending the original request")
-		return client.Do(req)
+		return t.original.RoundTrip(req)
+	} else {
+		// Anti scrape is not triggered
+		slog.Info("anti-scrape not detected")
+		resp.Body = io.NopCloser(bytes.NewReader(rawBody))
+		return resp, nil
 	}
-	return resp, nil
 }
